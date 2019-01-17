@@ -30,7 +30,7 @@ const (
 	defaultWriteTimeout      = 3 * time.Second
 )
 
-// TODO: 完善单元测试 路由插件
+// TODO: 完善单元测试 路由插件 自动清理失效的连接
 
 var contextPool = sync.Pool{
 	New: func() interface{} {
