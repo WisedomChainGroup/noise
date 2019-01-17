@@ -6,7 +6,6 @@ import (
 
 	"github.com/perlin-network/noise/crypto"
 	"github.com/perlin-network/noise/internal/protobuf"
-	"github.com/perlin-network/noise/peer"
 
 	"github.com/gogo/protobuf/proto"
 )
@@ -22,9 +21,6 @@ type NetworkInterface interface {
 
 	// Listen starts listening for peers on a port.
 	Listen()
-
-	// Client either creates or returns a cached peer client given its host address.
-	Client(address string) (*PeerClient, error)
 
 	// BlockUntilListening blocks until this node is listening for new peers.
 	BlockUntilListening()
@@ -58,7 +54,7 @@ type NetworkInterface interface {
 	BroadcastByAddresses(ctx context.Context, message proto.Message, addresses ...string)
 
 	// BroadcastByIDs broadcasts a message to a set of peer clients denoted by their peer IDs.
-	BroadcastByIDs(ctx context.Context, message proto.Message, ids ...peer.ID)
+	BroadcastByIDs(ctx context.Context, message proto.Message, ids ...string)
 
 	// BroadcastRandomly asynchronously broadcasts a message to random selected K peers.
 	// Does not guarantee broadcasting to exactly K peers.

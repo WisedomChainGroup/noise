@@ -3,11 +3,7 @@ package network
 import (
 	"bytes"
 	"crypto/rand"
-	"reflect"
 	"testing"
-
-	"github.com/perlin-network/noise/internal/protobuf"
-	"github.com/perlin-network/noise/peer"
 )
 
 func TestSerializeMessageInfoForSigning(t *testing.T) {
@@ -22,11 +18,11 @@ func TestSerializeMessageInfoForSigning(t *testing.T) {
 
 	pk1, pk2 := mustReadRand(32), mustReadRand(32)
 
-	ids := []protobuf.ID{
-		protobuf.ID(peer.CreateID("tcp://127.0.0.1:3001", pk1)),
-		protobuf.ID(peer.CreateID("tcp://127.0.0.1:3001", pk2)),
-		protobuf.ID(peer.CreateID("tcp://127.0.0.1:3002", pk1)),
-		protobuf.ID(peer.CreateID("tcp://127.0.0.1:3002", pk2)),
+	peers := []*Peer{
+		&Peer{Address: "tcp://127.0.0.1:3001", PublicKey: pk1},
+		&Peer{Address: "tcp://127.0.0.1:3001", PublicKey: pk2},
+		&Peer{Address: "tcp://127.0.0.1:3002", PublicKey: pk1},
+		&Peer{Address: "tcp://127.0.0.1:3002", PublicKey: pk2},
 	}
 
 	messages := [][]byte{
@@ -36,9 +32,9 @@ func TestSerializeMessageInfoForSigning(t *testing.T) {
 
 	outputs := make([][]byte, 0)
 
-	for _, id := range ids {
+	for _, p := range peers {
 		for _, msg := range messages {
-			outputs = append(outputs, SerializeMessage(&id, msg))
+			outputs = append(outputs, SerializeMessage(p, msg))
 		}
 	}
 
@@ -51,34 +47,3 @@ func TestSerializeMessageInfoForSigning(t *testing.T) {
 	}
 }
 
-func TestFilterPeers(t *testing.T) {
-	result := FilterPeers("tcp://10.0.0.3:3000", []string{
-		"tcp://10.0.0.5:3000",
-		"tcp://10.0.0.1:3000",
-		"tcp://10.0.0.1:3000",
-		"",
-		"tcp://10.0.0.1:2000",
-		"tcp://10.0.0.3:3000",
-		"kcp://10.0.0.3:3000",
-		"",
-		"tcp://10.0.0.6:3000",
-		"tcp://localhost:3004",
-		"tcp://::1:3005",
-	})
-
-	expected := []string{
-		"tcp://10.0.0.5:3000",
-		"tcp://10.0.0.1:3000",
-		// "tcp://10.0.0.1:3000" is a duplicate
-		"tcp://10.0.0.1:2000",
-		// "tcp://10.0.0.3:3000" is filtered
-		"kcp://10.0.0.3:3000",
-		"tcp://10.0.0.6:3000",
-		"tcp://127.0.0.1:3004",
-		// "tcp://::1:3005" will be removed
-	}
-
-	if !reflect.DeepEqual(result, expected) {
-		t.Fatalf("Unexpected got %v, but expected %v", result, expected)
-	}
-}

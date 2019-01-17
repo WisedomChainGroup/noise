@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/perlin-network/noise/internal/protobuf"
-	"github.com/perlin-network/noise/peer"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
@@ -20,16 +19,20 @@ type PeerClient struct {
 
 	Network *Network
 
-	ID      *peer.ID
-	Address string
+	// id of peer
+	ID string
+
+	// remote address of peer
+	remoteAddr net.Addr
+
+	// connection
+	conn net.Conn
 
 	Requests     sync.Map // uint64 -> *RequestState
 	RequestNonce uint64
 
 	stream StreamState
 
-	outgoingReady chan struct{}
-	incomingReady chan struct{}
 
 	jobs chan func()
 
@@ -54,20 +57,15 @@ type RequestState struct {
 }
 
 // createPeerClient creates a stub peer client.
-func createPeerClient(network *Network, address string) (*PeerClient, error) {
+func createPeerClient(network *Network, id string, conn net.Conn) *PeerClient {
 	// Ensure the address is valid.
-	if _, err := ParseAddress(address); err != nil {
-		return nil, err
-	}
 
 	client := &PeerClient{
-		Network:      network,
-		Address:      address,
-		RequestNonce: 0,
-
-		incomingReady: make(chan struct{}),
-		outgoingReady: make(chan struct{}),
-
+		Network:       network,
+		ID:            id,
+		remoteAddr: conn.RemoteAddr(),
+		RequestNonce:  0,
+		conn:          conn,
 		stream: StreamState{
 			buffer:   make([]byte, 0),
 			buffered: make(chan struct{}),
@@ -77,7 +75,7 @@ func createPeerClient(network *Network, address string) (*PeerClient, error) {
 		closeSignal: make(chan struct{}),
 	}
 
-	return client, nil
+	return client
 }
 
 // Init initialize a client's pluging and starts executing a jobs.
@@ -99,13 +97,6 @@ func (c *PeerClient) executeJobs() {
 	}
 }
 
-// Submit adds a job to the execution queue.
-func (c *PeerClient) Submit(job func()) {
-	select {
-	case c.jobs <- job:
-	case <-c.closeSignal:
-	}
-}
 
 // Close stops all sessions/streams and cleans up the nodes in routing table.
 func (c *PeerClient) Close() error {
@@ -124,14 +115,14 @@ func (c *PeerClient) Close() error {
 	})
 
 	// Remove entries from node's network.
-	if c.ID != nil {
+	if c.ID != "" {
 		// close out connections
-		if state, ok := c.Network.ConnectionState(c.ID.Address); ok {
+		if state, ok := c.Network.ConnectionState(c.ID); ok {
 			state.conn.Close()
 		}
 
-		c.Network.peers.Delete(c.ID.Address)
-		c.Network.connections.Delete(c.ID.Address)
+		c.Network.peers.Delete(c.ID)
+		c.Network.connections.Delete(c.ID)
 	}
 
 	return nil
@@ -144,9 +135,9 @@ func (c *PeerClient) Tell(ctx context.Context, message proto.Message) error {
 		return errors.Wrap(err, "failed to sign message")
 	}
 
-	err = c.Network.Write(c.Address, signed)
+	err = c.Network.Write(c.ID, signed)
 	if err != nil {
-		return errors.Wrapf(err, "failed to send message to %s", c.Address)
+		return errors.Wrapf(err, "failed to send message to %s", c.ID)
 	}
 
 	return nil
@@ -169,7 +160,7 @@ func (c *PeerClient) Request(ctx context.Context, req proto.Message) (proto.Mess
 
 	signed.RequestNonce = atomic.AddUint64(&c.RequestNonce, 1)
 
-	err = c.Network.Write(c.Address, signed)
+	err = c.Network.Write(c.ID, signed)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +197,7 @@ func (c *PeerClient) Reply(ctx context.Context, nonce uint64, message proto.Mess
 	msg.RequestNonce = nonce
 	msg.ReplyFlag = true
 
-	err = c.Network.Write(c.Address, msg)
+	err = c.Network.Write(c.ID, msg)
 	if err != nil {
 		return err
 	}
@@ -284,11 +275,7 @@ func (c *PeerClient) LocalAddr() net.Addr {
 
 // RemoteAddr implements net.Conn.
 func (c *PeerClient) RemoteAddr() net.Addr {
-	addr, err := ParseAddress(c.Address)
-	if err != nil {
-		panic(err) // should never happen
-	}
-	return addr
+	return c.remoteAddr
 }
 
 // SetDeadline implements net.Conn.
@@ -316,32 +303,4 @@ func (c *PeerClient) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
-// setIncomingReady sets a client state to ready for the incomming requests.
-func (c *PeerClient) setIncomingReady() {
-	close(c.incomingReady)
-}
 
-// setOutgoingReady sets a client state to ready for the outgoing requests.
-func (c *PeerClient) setOutgoingReady() {
-	close(c.outgoingReady)
-}
-
-// IsIncomingReady returns true if the client has both incoming and outgoing sockets established.
-func (c *PeerClient) IsIncomingReady() bool {
-	select {
-	case <-c.incomingReady:
-		return true
-	case <-time.After(1 * time.Second):
-		return false
-	}
-}
-
-// IsOutgoingReady returns true if the client has an outgoing socket established.
-func (c *PeerClient) IsOutgoingReady() bool {
-	select {
-	case <-c.outgoingReady:
-		return true
-	case <-time.After(1 * time.Second):
-		return false
-	}
-}

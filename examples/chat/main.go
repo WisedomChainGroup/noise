@@ -11,7 +11,6 @@ import (
 	"github.com/perlin-network/noise/examples/chat/messages"
 	"github.com/perlin-network/noise/log"
 	"github.com/perlin-network/noise/network"
-	"github.com/perlin-network/noise/network/discovery"
 	"github.com/perlin-network/noise/types/opcode"
 )
 
@@ -20,7 +19,7 @@ type ChatPlugin struct{ *network.Plugin }
 func (state *ChatPlugin) Receive(ctx *network.PluginContext) error {
 	switch msg := ctx.Message().(type) {
 	case *messages.ChatMessage:
-		log.Info().Msgf("<%s> %s", ctx.Client().ID.Address, msg.Message)
+		log.Info().Msgf("<%s> %s", ctx.Client().ID, msg.Message)
 	}
 
 	return nil
@@ -50,7 +49,7 @@ func main() {
 	builder.SetAddress(network.FormatAddress(protocol, host, port))
 
 	// Register peer discovery plugin.
-	builder.AddPlugin(new(discovery.Plugin))
+	// builder.AddPlugin(new(discovery.Plugin))
 
 	// Add custom chat plugin.
 	builder.AddPlugin(new(ChatPlugin))

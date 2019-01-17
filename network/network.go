@@ -3,8 +3,10 @@ package network
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"math/rand"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,7 +15,6 @@ import (
 	"github.com/perlin-network/noise/internal/protobuf"
 	"github.com/perlin-network/noise/log"
 	"github.com/perlin-network/noise/network/transport"
-	"github.com/perlin-network/noise/peer"
 	"github.com/perlin-network/noise/types/opcode"
 
 	"github.com/gogo/protobuf/proto"
@@ -28,6 +29,8 @@ const (
 	defaultWriteFlushLatency = 50 * time.Millisecond
 	defaultWriteTimeout      = 3 * time.Second
 )
+
+// TODO: 完善单元测试 路由插件
 
 var contextPool = sync.Pool{
 	New: func() interface{} {
@@ -52,9 +55,6 @@ type Network struct {
 	// Map of plugins registered to the network.
 	// map[string]Plugin
 	plugins *PluginList
-
-	// Node's cryptographic ID.
-	ID peer.ID
 
 	// Map of connection addresses (string) <-> *network.PeerClient
 	// so that the Network doesn't dial multiple times to the same ip
@@ -101,6 +101,21 @@ func (n *Network) Init() {
 	go n.flushLoop()
 }
 
+func(n *Network) ID() string{
+	return hex.EncodeToString(n.keys.PublicKey)
+}
+
+func(n *Network) Self() *Peer{
+	addrInfo, err := ParseAddress(n.Address)
+	if err != nil {
+		log.Fatal().Err(err).Msg("")
+	}
+	return &Peer{
+		PublicKey:n.keys.PublicKey,
+		Address: addrInfo.HostPort(),
+	}
+}
+
 func (n *Network) flushLoop() {
 	t := time.NewTicker(n.opts.writeFlushLatency)
 	defer t.Stop()
@@ -129,9 +144,6 @@ func (n *Network) GetKeys() *crypto.KeyPair {
 }
 
 func (n *Network) dispatchMessage(client *PeerClient, msg *protobuf.Message) {
-	if !client.IsIncomingReady() {
-		return
-	}
 	var ptr proto.Message
 	// unmarshal message based on specified opcode
 	code := opcode.Opcode(msg.Opcode)
@@ -232,7 +244,7 @@ func (n *Network) Listen() {
 	n.startListening()
 
 	log.Info().
-		Str("address", n.Address).
+		Str("address", n.Self().Encode()).
 		Msg("Listening for peers.")
 
 	// handle server shutdowns
@@ -262,44 +274,20 @@ func (n *Network) Listen() {
 }
 
 // Client either creates or returns a cached peer client given its host address.
-func (n *Network) Client(address string) (*PeerClient, error) {
-	address, err := ToUnifiedAddress(address)
-	if err != nil {
-		return nil, err
-	}
+func (n *Network) Client(peer *Peer, conn net.Conn) (*PeerClient, error) {
 
-	if address == n.Address {
-		return nil, errors.New("network: peer should not dial itself")
-	}
+	clientNew := createPeerClient(n, peer.ID(), conn)
 
-	clientNew, err := createPeerClient(n, address)
-	if err != nil {
-		return nil, err
-	}
 
-	c, exists := n.peers.LoadOrStore(address, clientNew)
+	c, exists := n.peers.LoadOrStore(peer.ID(), clientNew)
 	if exists {
 		client := c.(*PeerClient)
-
-		if !client.IsOutgoingReady() {
-			return nil, errors.New("network: peer failed to connect")
-		}
-
 		return client, nil
 	}
 
 	client := c.(*PeerClient)
-	defer func() {
-		client.setOutgoingReady()
-	}()
 
-	conn, err := n.Dial(address)
-	if err != nil {
-		n.peers.Delete(address)
-		return nil, err
-	}
-
-	n.connections.Store(address, &ConnState{
+	n.connections.Store(peer.ID(), &ConnState{
 		conn:        conn,
 		writer:      bufio.NewWriterSize(conn, n.opts.writeBufferSize),
 		writerMutex: new(sync.Mutex),
@@ -307,18 +295,20 @@ func (n *Network) Client(address string) (*PeerClient, error) {
 
 	client.Init()
 
+	go n.receiveLoop(client, conn)
+
 	return client, nil
 }
 
-// ConnectionStateExists returns true if network has a connection on a given address.
-func (n *Network) ConnectionStateExists(address string) bool {
-	_, ok := n.connections.Load(address)
+// ConnectionStateExists returns true if network has a connection on a given peer id.
+func (n *Network) ConnectionStateExists(id string) bool {
+	_, ok := n.connections.Load(id)
 	return ok
 }
 
 // ConnectionState returns a connections state for current address.
-func (n *Network) ConnectionState(address string) (*ConnState, bool) {
-	conn, ok := n.connections.Load(address)
+func (n *Network) ConnectionState(id string) (*ConnState, bool) {
+	conn, ok := n.connections.Load(id)
 	if !ok {
 		return nil, false
 	}
@@ -335,29 +325,39 @@ func (n *Network) BlockUntilListening() {
 	<-n.listeningCh
 }
 
-// Bootstrap with a number of peers and commence a handshake.
-func (n *Network) Bootstrap(addresses ...string) {
+// Bootstrap with a number of encoded peers
+func (n *Network) Bootstrap(raws ...string) {
 	n.BlockUntilListening()
 
-	addresses = FilterPeers(n.Address, addresses)
-
-	for _, address := range addresses {
-		client, err := n.Client(address)
-
-		if err != nil {
+	for _, r := range raws{
+		p, err := Decode(r)
+		if err != nil{
 			log.Error().Err(err).Msg("")
 			continue
 		}
-
-		err = client.Tell(context.Background(), &protobuf.Ping{})
-		if err != nil {
+		err = n.AddPeer(p)
+		if err != nil{
+			log.Error().Err(err).Msg("")
 			continue
 		}
 	}
 }
 
+func (n *Network) AddPeer(p *Peer) error{
+	conn, err := n.Dial(p.Address)
+	if err != nil{
+		return err
+	}
+	_, err = n.Client(p, conn)
+	return err
+}
+
 // Dial establishes a bidirectional connection to an address, and additionally handshakes with said address.
 func (n *Network) Dial(address string) (net.Conn, error) {
+	// default dail by tcp if scheme miss
+	if strings.Index(address, "://") < 0{
+		address = "tcp://" + address
+	}
 	addrInfo, err := ParseAddress(address)
 	if err != nil {
 		return nil, err
@@ -386,82 +386,37 @@ func (n *Network) Dial(address string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return conn, nil
 }
 
 // Accept handles peer registration and processes incoming message streams.
 func (n *Network) Accept(incoming net.Conn) {
-	var client *PeerClient
-
-	recvWindow := NewRecvWindow(n.opts.recvWindowSize)
-
-	// Cleanup connections when we are done with them.
-	defer func() {
-		time.Sleep(1 * time.Second)
-
-		if client != nil {
-			client.Close()
+	// 收到新的连接 如果无法验证这个连接的发送者则关闭这个连接
+	msg, err := n.receiveMessage(incoming)
+	if err != nil {
+		defer incoming.Close()
+		if err != errEmptyMsg {
+			log.Error().Msgf("%v", err)
 		}
+	}
+	sender := &Peer{
+		PublicKey:msg.Sender.PublicKey,
+		Address:msg.Sender.Address,
+	}
 
-		if incoming != nil {
-			incoming.Close()
-		}
-	}()
+	n.Client(sender, incoming)
+}
 
+func (n *Network) receiveLoop(peer *PeerClient, conn net.Conn) {
 	for {
-		msg, err := n.receiveMessage(incoming)
+		msg, err := n.receiveMessage(conn)
 		if err != nil {
 			if err != errEmptyMsg {
 				log.Error().Msgf("%v", err)
 			}
 			break
 		}
-
-		// Initialize client if not exists.
-		if client == nil {
-			client, err = n.Client(msg.Sender.Address)
-
-			if err != nil {
-				return
-			}
-		}
-
-		client.Do(func() {
-			client.ID = (*peer.ID)(msg.Sender)
-
-			if !n.ConnectionStateExists(client.ID.Address) {
-				err = errors.New("network: failed to load session")
-			}
-
-			client.setIncomingReady()
-		})
-
-		if err != nil {
-			log.Error().Err(err).Msg("network: error initializing client")
-			return
-		}
-
-		go func() {
-			// Peer sent message with a completely different ID. Disconnect.
-			if !client.ID.Equals(peer.ID(*msg.Sender)) {
-				log.Error().
-					Interface("peer_id", peer.ID(*msg.Sender)).
-					Interface("client_id", client.ID).
-					Msg("Message signed by peer does not match client ID.")
-				return
-			}
-
-			recvWindow.Push(msg.MessageNonce, msg)
-
-			ready := recvWindow.Pop()
-			for _, msg := range ready {
-				msg := msg
-				client.Submit(func() {
-					n.dispatchMessage(client, msg.(*protobuf.Message))
-				})
-			}
-		}()
+		n.dispatchMessage(peer, msg)
 	}
 }
 
@@ -490,19 +445,24 @@ func (n *Network) PrepareMessage(ctx context.Context, message proto.Message) (*p
 		return nil, err
 	}
 
-	id := protobuf.ID(n.ID)
 
 	msg := &protobuf.Message{
 		Message: raw,
 		Opcode:  uint32(opcode),
-		Sender:  &id,
+		Sender:  &protobuf.Peer{
+			PublicKey:n.keys.PublicKey,
+			Address:n.Address,
+		},
 	}
 
 	if GetSignMessage(ctx) {
 		signature, err := n.keys.Sign(
 			n.opts.signaturePolicy,
 			n.opts.hashPolicy,
-			SerializeMessage(&id, raw),
+			SerializeMessage(&Peer{
+				PublicKey:msg.Sender.PublicKey,
+				Address:msg.Sender.Address,
+			}, raw),
 		)
 		if err != nil {
 			return nil, err
@@ -514,8 +474,8 @@ func (n *Network) PrepareMessage(ctx context.Context, message proto.Message) (*p
 }
 
 // Write asynchronously sends a message to a denoted target address.
-func (n *Network) Write(address string, message *protobuf.Message) error {
-	state, ok := n.ConnectionState(address)
+func (n *Network) Write(id string, message *protobuf.Message) error {
+	state, ok := n.ConnectionState(id)
 	if !ok {
 		return errors.New("network: connection does not exist")
 	}
@@ -540,7 +500,7 @@ func (n *Network) Broadcast(ctx context.Context, message proto.Message) {
 	}
 
 	n.eachPeer(func(client *PeerClient) bool {
-		err := n.Write(client.Address, signed)
+		err := n.Write(client.ID, signed)
 		if err != nil {
 			log.Warn().
 				Err(err).
@@ -564,14 +524,14 @@ func (n *Network) BroadcastByAddresses(ctx context.Context, message proto.Messag
 }
 
 // BroadcastByIDs broadcasts a message to a set of peer clients denoted by their peer IDs.
-func (n *Network) BroadcastByIDs(ctx context.Context, message proto.Message, ids ...peer.ID) {
+func (n *Network) BroadcastByIDs(ctx context.Context, message proto.Message, ids ...string) {
 	signed, err := n.PrepareMessage(ctx, message)
 	if err != nil {
 		return
 	}
 
 	for _, id := range ids {
-		n.Write(id.Address, signed)
+		n.Write(id, signed)
 	}
 }
 
@@ -581,7 +541,7 @@ func (n *Network) BroadcastRandomly(ctx context.Context, message proto.Message, 
 	var addresses []string
 
 	n.eachPeer(func(client *PeerClient) bool {
-		addresses = append(addresses, client.Address)
+		addresses = append(addresses, client.ID)
 
 		// Limit total amount of addresses in case we have a lot of peers.
 		return len(addresses) <= K*3
