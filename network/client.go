@@ -95,20 +95,19 @@ func (c *PeerClient) Close() error {
 	c.stream.isClosed = true
 	c.stream.Unlock()
 
-	c.Network.plugins.Each(func(plugin PluginInterface) {
-		plugin.PeerDisconnect(c)
-	})
-
 	// Remove entries from node's network.
 	if c.ID != "" {
 		// close out connections
 		if state, ok := c.Network.ConnectionState(c.ID); ok {
 			state.conn.Close()
 		}
-
 		c.Network.peers.Delete(c.ID)
 		c.Network.connections.Delete(c.ID)
 	}
+
+	c.Network.plugins.Each(func(plugin PluginInterface) {
+		plugin.PeerDisconnect(c)
+	})
 
 	return nil
 }
