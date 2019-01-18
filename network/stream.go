@@ -116,7 +116,10 @@ func (n *Network) receiveMessage(conn net.Conn) (*protobuf.Message, error) {
 		n.opts.signaturePolicy,
 		n.opts.hashPolicy,
 		msg.Sender.PublicKey,
-		SerializeMessage(msg.Sender, msg.Message),
+		SerializeMessage(&Peer{
+			PublicKey:msg.Sender.PublicKey,
+			Address:msg.Sender.Address,
+		}, msg.Message),
 		msg.Signature,
 	) {
 		return nil, errors.New("received message had an malformed signature")

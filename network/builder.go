@@ -9,7 +9,6 @@ import (
 	"github.com/perlin-network/noise/crypto/blake2b"
 	"github.com/perlin-network/noise/crypto/ed25519"
 	"github.com/perlin-network/noise/network/transport"
-	"github.com/perlin-network/noise/peer"
 	"github.com/pkg/errors"
 )
 
@@ -213,11 +212,8 @@ func (builder *Builder) Build() (*Network, error) {
 		return nil, err
 	}
 
-	id := peer.CreateID(unifiedAddress, builder.keys.PublicKey)
-
 	net := &Network{
 		opts:    builder.opts,
-		ID:      id,
 		keys:    builder.keys,
 		Address: unifiedAddress,
 

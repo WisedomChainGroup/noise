@@ -33,8 +33,7 @@ func (m *PluginList) SortByPriority() {
 	})
 }
 
-// PutInfo places a new plugins info onto the list.
-func (m *PluginList) PutInfo(plugin *PluginInfo) bool {
+func (m *PluginList) putInfo(plugin *PluginInfo) bool {
 	ty := reflect.TypeOf(plugin.Plugin)
 	if _, ok := m.keys[ty]; ok {
 		return false
@@ -46,7 +45,7 @@ func (m *PluginList) PutInfo(plugin *PluginInfo) bool {
 
 // Put places a new plugin with a set priority onto the list.
 func (m *PluginList) Put(priority int, plugin PluginInterface) bool {
-	return m.PutInfo(&PluginInfo{
+	return m.putInfo(&PluginInfo{
 		Priority: priority,
 		Plugin:   plugin,
 	})
@@ -58,14 +57,14 @@ func (m *PluginList) Len() int {
 }
 
 // GetInfo gets the priority and plugin interface given a plugin ID. Returns nil if not exists.
-func (m *PluginList) GetInfo(withTy interface{}) (*PluginInfo, bool) {
+func (m *PluginList) getInfo(withTy interface{}) (*PluginInfo, bool) {
 	item, ok := m.keys[reflect.TypeOf(withTy)]
 	return item, ok
 }
 
 // Get returns the plugin interface given a plugin ID. Returns nil if not exists.
 func (m *PluginList) Get(withTy interface{}) (PluginInterface, bool) {
-	if info, ok := m.GetInfo(withTy); ok {
+	if info, ok := m.getInfo(withTy); ok {
 		return info.Plugin, true
 	} else {
 		return nil, false

@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/gogo/protobuf/proto"
-	"github.com/perlin-network/noise/peer"
 )
 
 // PluginContext provides parameters and helper functions to a Plugin
@@ -33,14 +32,4 @@ func (pctx *PluginContext) Client() *PeerClient {
 // Network returns the entire node's network.
 func (pctx *PluginContext) Network() *Network {
 	return pctx.client.Network
-}
-
-// Self returns the node's ID.
-func (pctx *PluginContext) Self() peer.ID {
-	return pctx.Network().ID
-}
-
-// Sender returns the peer's ID.
-func (pctx *PluginContext) Sender() peer.ID {
-	return *pctx.client.ID
 }
