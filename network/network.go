@@ -347,11 +347,11 @@ func (n *Network) AddPeer(p *Peer) error {
 		return err
 	}
 	_, err = n.Client(p, conn)
-	if err != nil{
+	if err != nil {
 		log.Error().Msgf("%v", err)
 	}
 	ping, err := n.PrepareMessage(WithSignMessage(context.Background(), true), &protobuf.Ping{})
-	if err != nil{
+	if err != nil {
 		log.Error().Msgf("%v", err)
 	}
 	n.Write(p.ID(), ping)
@@ -580,4 +580,25 @@ func (n *Network) eachPeer(fn func(client *PeerClient) bool) {
 		client := value.(*PeerClient)
 		return fn(client)
 	})
+}
+
+func (n *Network) Peers() []*Peer {
+	res := make([]*Peer, 0)
+	n.peers.Range(func(k, v interface{}) bool {
+		p, ok := v.(*PeerClient)
+		if !ok {
+			return true
+		}
+		pbk, err := hex.DecodeString(k.(string))
+		if err != nil {
+			return true
+		}
+
+		res = append(res, &Peer{
+			PublicKey: pbk,
+			Address:   p.RemoteAddr().String(),
+		})
+		return true
+	})
+	return res
 }

@@ -2,25 +2,24 @@ package network
 
 import (
 	"context"
-	"github.com/perlin-network/noise/internal/protobuf"
-	"github.com/perlin-network/noise/log"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/perlin-network/noise/internal/protobuf"
+	"github.com/perlin-network/noise/log"
 
 	"github.com/perlin-network/noise/network/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
 
-// TODO: 注释功能
-
 var testifyTimeout = time.Second * 5
 
-func assertNotTimeout(t *testing.T, timeout time.Duration, c chan struct{}){
-	select{
-	case <- c:
-	case <- time.NewTimer(timeout).C:
+func assertNotTimeout(t *testing.T, timeout time.Duration, c chan struct{}) {
+	select {
+	case <-c:
+	case <-time.NewTimer(timeout).C:
 		t.Fail()
 	}
 }
@@ -61,6 +60,7 @@ func newTestNetwork(port int, plugins ...PluginInterface) *Network {
 	return network
 }
 
+// NetworkTestSuite 测试 network 的公开方法
 type NetworkTestSuite struct {
 	suite.Suite
 	n1 *Network
@@ -69,11 +69,13 @@ type NetworkTestSuite struct {
 	m2 *mailBox
 }
 
-func(suite *NetworkTestSuite) SetupSuite(){
+// SetupSuite 为测试做准备工作
+func (suite *NetworkTestSuite) SetupSuite() {
 	log.Disable()
 }
 
-func(suite *NetworkTestSuite) SetupTest(){
+// SetupTest 为每个测试方法做准备工作
+func (suite *NetworkTestSuite) SetupTest() {
 	suite.m1 = newMailBox()
 	suite.n1 = newTestNetwork(6002, suite.m1)
 	suite.m2 = newMailBox()
@@ -84,14 +86,15 @@ func(suite *NetworkTestSuite) SetupTest(){
 	suite.n2.BlockUntilListening()
 }
 
-func(suite *NetworkTestSuite) TearDownTest(){
+// TearDownTest 在每个测试结束后清理资源
+func (suite *NetworkTestSuite) TearDownTest() {
 	suite.n1.Close()
 	suite.n2.Close()
-	<- suite.n1.kill
-	<- suite.n2.kill
+	<-suite.n1.kill
+	<-suite.n2.kill
 }
 
-
+// TestListen 测试监听方法
 func (suite *NetworkTestSuite) TestListen() {
 	t := suite.T()
 	m := newMailBox()
@@ -101,7 +104,8 @@ func (suite *NetworkTestSuite) TestListen() {
 	n.Close()
 }
 
-func (suite *NetworkTestSuite) TestClose(){
+// TestClose 测试关闭 network
+func (suite *NetworkTestSuite) TestClose() {
 	t := suite.T()
 	m := newMailBox()
 	n := newTestNetwork(6000, m)
@@ -110,6 +114,7 @@ func (suite *NetworkTestSuite) TestClose(){
 	assertNotTimeout(t, testifyTimeout, m.closed)
 }
 
+// TestBootstrap 测试加入种子节点
 func (suite *NetworkTestSuite) TestBootstrap() {
 	t := suite.T()
 	suite.n1.Bootstrap(suite.n2.Self().Encode())
@@ -125,36 +130,50 @@ func (suite *NetworkTestSuite) TestBootstrap() {
 	assert.True(t, ok)
 }
 
-func(suite *NetworkTestSuite) TestBroadcast(){
+// TestPeers 测试获取 peer 信息
+func (suite *NetworkTestSuite) TestPeers() {
+	t := suite.T()
+	suite.n1.Bootstrap(suite.n2.Self().Encode())
+	<-suite.m1.peerConnected
+	<-suite.m2.peerConnected
+	peers := suite.n1.Peers()
+	assert.NotEmpty(t, peers)
+	assert.Equal(t, peers[0].ID(), suite.n2.ID())
+}
+
+// TestBroadcast 测试广播一则消息
+func (suite *NetworkTestSuite) TestBroadcast() {
 	t := suite.T()
 	suite.n1.Bootstrap(suite.n2.Self().Encode())
 	suite.n1.Broadcast(WithSignMessage(context.Background(), true), &protobuf.Ping{})
-	ping := <- suite.m2.messages
-	_ , ok := ping.(*protobuf.Ping)
+	ping := <-suite.m2.messages
+	_, ok := ping.(*protobuf.Ping)
 	assert.True(t, ok)
 }
 
-func(suite *NetworkTestSuite) TestBroadcastByID(){
+// TestBroadcastByID 测试广播一则消息给特定 peer
+func (suite *NetworkTestSuite) TestBroadcastByID() {
 	t := suite.T()
 	suite.n1.Bootstrap(suite.n2.Self().Encode())
 	suite.n1.BroadcastByIDs(
 		WithSignMessage(context.Background(), true), &protobuf.Ping{}, suite.n2.Self().ID(),
-		)
-	ping := <- suite.m2.messages
-	_ , ok := ping.(*protobuf.Ping)
+	)
+	ping := <-suite.m2.messages
+	_, ok := ping.(*protobuf.Ping)
 	assert.True(t, ok)
 }
 
-func(suite *NetworkTestSuite) TestPeerDisconnected(){
+// TestPeerDisconnected 测试节点断开
+func (suite *NetworkTestSuite) TestPeerDisconnected() {
 	t := suite.T()
 	suite.n1.Bootstrap(suite.n2.Self().Encode())
 	// block until peers join
-	<- suite.m2.peerConnected
+	<-suite.m2.peerConnected
 	conn, ok := suite.n2.connections.Load(suite.n1.Self().ID())
 	assert.True(t, ok)
 	c, ok := conn.(*ConnState)
 	assert.True(t, ok)
-	assert.NoError(t,c.conn.Close())
+	assert.NoError(t, c.conn.Close())
 	assertNotTimeout(t, testifyTimeout, suite.m1.peerDisconnected)
 	assertNotTimeout(t, testifyTimeout, suite.m2.peerDisconnected)
 	_, ok = suite.n1.connections.Load(suite.n2.ID())
