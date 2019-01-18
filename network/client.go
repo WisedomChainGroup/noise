@@ -34,8 +34,6 @@ type PeerClient struct {
 	stream StreamState
 
 
-	jobs chan func()
-
 	closed      uint32 // for atomic ops
 	closeSignal chan struct{}
 }
@@ -71,7 +69,6 @@ func createPeerClient(network *Network, id string, conn net.Conn) *PeerClient {
 			buffered: make(chan struct{}),
 		},
 
-		jobs:        make(chan func(), 128),
 		closeSignal: make(chan struct{}),
 	}
 
@@ -83,18 +80,6 @@ func (c *PeerClient) Init() {
 	c.Network.plugins.Each(func(plugin PluginInterface) {
 		plugin.PeerConnect(c)
 	})
-	go c.executeJobs()
-}
-
-func (c *PeerClient) executeJobs() {
-	for {
-		select {
-		case job := <-c.jobs:
-			job()
-		case <-c.closeSignal:
-			return
-		}
-	}
 }
 
 

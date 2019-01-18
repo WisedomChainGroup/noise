@@ -30,8 +30,7 @@ const (
 	defaultWriteTimeout      = 3 * time.Second
 )
 
-// TODO: 完善单元测试 路由插件 自动清理失效的连接
-
+// TODO: 完善单元测试 peer保活插件
 var contextPool = sync.Pool{
 	New: func() interface{} {
 		return new(PluginContext)
@@ -101,18 +100,18 @@ func (n *Network) Init() {
 	go n.flushLoop()
 }
 
-func(n *Network) ID() string{
+func (n *Network) ID() string {
 	return hex.EncodeToString(n.keys.PublicKey)
 }
 
-func(n *Network) Self() *Peer{
+func (n *Network) Self() *Peer {
 	addrInfo, err := ParseAddress(n.Address)
 	if err != nil {
 		log.Fatal().Err(err).Msg("")
 	}
 	return &Peer{
-		PublicKey:n.keys.PublicKey,
-		Address: addrInfo.HostPort(),
+		PublicKey: n.keys.PublicKey,
+		Address:   addrInfo.HostPort(),
 	}
 }
 
@@ -278,7 +277,6 @@ func (n *Network) Client(peer *Peer, conn net.Conn) (*PeerClient, error) {
 
 	clientNew := createPeerClient(n, peer.ID(), conn)
 
-
 	c, exists := n.peers.LoadOrStore(peer.ID(), clientNew)
 	if exists {
 		client := c.(*PeerClient)
@@ -329,23 +327,23 @@ func (n *Network) BlockUntilListening() {
 func (n *Network) Bootstrap(raws ...string) {
 	n.BlockUntilListening()
 
-	for _, r := range raws{
+	for _, r := range raws {
 		p, err := Decode(r)
-		if err != nil{
+		if err != nil {
 			log.Error().Err(err).Msg("")
 			continue
 		}
 		err = n.AddPeer(p)
-		if err != nil{
+		if err != nil {
 			log.Error().Err(err).Msg("")
 			continue
 		}
 	}
 }
 
-func (n *Network) AddPeer(p *Peer) error{
+func (n *Network) AddPeer(p *Peer) error {
 	conn, err := n.Dial(p.Address)
-	if err != nil{
+	if err != nil {
 		return err
 	}
 	_, err = n.Client(p, conn)
@@ -355,7 +353,7 @@ func (n *Network) AddPeer(p *Peer) error{
 // Dial establishes a bidirectional connection to an address, and additionally handshakes with said address.
 func (n *Network) Dial(address string) (net.Conn, error) {
 	// default dail by tcp if scheme miss
-	if strings.Index(address, "://") < 0{
+	if strings.Index(address, "://") < 0 {
 		address = "tcp://" + address
 	}
 	addrInfo, err := ParseAddress(address)
@@ -400,8 +398,8 @@ func (n *Network) Accept(incoming net.Conn) {
 		}
 	}
 	sender := &Peer{
-		PublicKey:msg.Sender.PublicKey,
-		Address:msg.Sender.Address,
+		PublicKey: msg.Sender.PublicKey,
+		Address:   msg.Sender.Address,
 	}
 
 	n.Client(sender, incoming)
@@ -412,6 +410,7 @@ func (n *Network) receiveLoop(peer *PeerClient, conn net.Conn) {
 		msg, err := n.receiveMessage(conn)
 		if err != nil {
 			if err != errEmptyMsg {
+				defer peer.Close()
 				log.Error().Msgf("%v", err)
 			}
 			break
@@ -445,13 +444,12 @@ func (n *Network) PrepareMessage(ctx context.Context, message proto.Message) (*p
 		return nil, err
 	}
 
-
 	msg := &protobuf.Message{
 		Message: raw,
 		Opcode:  uint32(opcode),
-		Sender:  &protobuf.Peer{
-			PublicKey:n.keys.PublicKey,
-			Address:n.Address,
+		Sender: &protobuf.Peer{
+			PublicKey: n.keys.PublicKey,
+			Address:   n.Address,
 		},
 	}
 
@@ -460,8 +458,8 @@ func (n *Network) PrepareMessage(ctx context.Context, message proto.Message) (*p
 			n.opts.signaturePolicy,
 			n.opts.hashPolicy,
 			SerializeMessage(&Peer{
-				PublicKey:msg.Sender.PublicKey,
-				Address:msg.Sender.Address,
+				PublicKey: msg.Sender.PublicKey,
+				Address:   msg.Sender.Address,
 			}, raw),
 		)
 		if err != nil {
