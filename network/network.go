@@ -30,7 +30,7 @@ const (
 	defaultWriteTimeout      = 3 * time.Second
 )
 
-// TODO: 完善单元测试 peer保活插件
+// TODO: peer保活
 var contextPool = sync.Pool{
 	New: func() interface{} {
 		return new(PluginContext)
@@ -347,6 +347,14 @@ func (n *Network) AddPeer(p *Peer) error {
 		return err
 	}
 	_, err = n.Client(p, conn)
+	if err != nil{
+		log.Error().Msgf("%v", err)
+	}
+	ping, err := n.PrepareMessage(WithSignMessage(context.Background(), true), &protobuf.Ping{})
+	if err != nil{
+		log.Error().Msgf("%v", err)
+	}
+	n.Write(p.ID(), ping)
 	return err
 }
 

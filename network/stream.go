@@ -75,6 +75,9 @@ func (n *Network) receiveMessage(conn net.Conn) (*protobuf.Message, error) {
 		totalBytesRead += bytesRead
 	}
 
+	if err != nil{
+		return nil, err
+	}
 	// Decode message size.
 	size := binary.BigEndian.Uint32(buffer)
 
