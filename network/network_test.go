@@ -8,7 +8,7 @@ import (
 
 	"github.com/perlin-network/noise/internal/protobuf"
 	"github.com/perlin-network/noise/log"
-
+	"github.com/gogo/protobuf/proto"
 	"github.com/perlin-network/noise/network/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
@@ -17,6 +17,14 @@ import (
 var testifyTimeout = time.Second * 5
 
 func assertNotTimeout(t *testing.T, timeout time.Duration, c chan struct{}) {
+	select {
+	case <-c:
+	case <-time.NewTimer(timeout).C:
+		t.Fail()
+	}
+}
+
+func assertNotTimeoutMessage(t *testing.T, timeout time.Duration, c chan proto.Message) {
 	select {
 	case <-c:
 	case <-time.NewTimer(timeout).C:
@@ -77,9 +85,9 @@ func (suite *NetworkTestSuite) SetupSuite() {
 // SetupTest 为每个测试方法做准备工作
 func (suite *NetworkTestSuite) SetupTest() {
 	suite.m1 = newMailBox()
-	suite.n1 = newTestNetwork(6002, suite.m1)
+	suite.n1 = newTestNetwork(GetRandomUnusedPort(), suite.m1)
 	suite.m2 = newMailBox()
-	suite.n2 = newTestNetwork(6003, suite.m2)
+	suite.n2 = newTestNetwork(GetRandomUnusedPort(), suite.m2)
 	go suite.n1.Listen()
 	go suite.n2.Listen()
 	suite.n1.BlockUntilListening()
@@ -98,9 +106,10 @@ func (suite *NetworkTestSuite) TearDownTest() {
 func (suite *NetworkTestSuite) TestListen() {
 	t := suite.T()
 	m := newMailBox()
-	n := newTestNetwork(6000, m)
+	n := newTestNetwork(GetRandomUnusedPort(), m)
 	go n.Listen()
-	assertNotTimeout(t, testifyTimeout, m.started)
+	go assertNotTimeout(t, testifyTimeout, m.started)
+	go assertNotTimeout(t, testifyTimeout, n.listeningCh)
 	n.Close()
 }
 
@@ -108,10 +117,10 @@ func (suite *NetworkTestSuite) TestListen() {
 func (suite *NetworkTestSuite) TestClose() {
 	t := suite.T()
 	m := newMailBox()
-	n := newTestNetwork(6000, m)
+	n := newTestNetwork(GetRandomUnusedPort(), m)
 	go n.Listen()
 	n.Close()
-	assertNotTimeout(t, testifyTimeout, m.closed)
+	go assertNotTimeout(t, testifyTimeout, m.closed)
 }
 
 // TestBootstrap 测试加入种子节点
@@ -191,6 +200,43 @@ func (suite *NetworkTestSuite) TestPeerDisconnected() {
 	assert.False(t, ok)
 	_, ok = suite.n1.peers.Load(suite.n2.ID())
 	assert.False(t, ok)
+}
+
+// TestPeersRing 测试环形结构
+func (suite *NetworkTestSuite) TestPeersRing() {
+	const nodes = 15
+	t := suite.T()
+	networks := make([]*Network, nodes)
+	mailboxes := make([]*mailBox, nodes)
+	for i := 0; i < nodes; i++ {
+		mailboxes[i] = newMailBox()
+		network := newTestNetwork(
+			GetRandomUnusedPort(),
+			mailboxes[i],
+		)
+		networks[i] = network
+		go networks[i].Listen()
+		networks[i].BlockUntilListening()
+	}
+	// let peers join each other
+	for i := 0; i < nodes; i++ {
+		for j := 0; j < nodes; j++ {
+			if i != j {
+				go networks[i].Bootstrap(networks[j].Self().Encode())
+			}
+		}
+	}
+	// peers join assertion
+	for _, m := range mailboxes {
+		for i := 0; i < nodes-1; i++ {
+			assertNotTimeout(t, testifyTimeout, m.peerConnected)
+		}
+	}
+	// broadcast to p2p ring
+	networks[0].Broadcast(WithSignMessage(context.Background(), true), &protobuf.Ping{})
+	for  _, m := range mailboxes[1:] {
+		go assertNotTimeoutMessage(t, testifyTimeout, m.messages)
+	}
 }
 
 func TestNetworkTestSuite(t *testing.T) {

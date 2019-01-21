@@ -342,6 +342,9 @@ func (n *Network) Bootstrap(raws ...string) {
 }
 
 func (n *Network) AddPeer(p *Peer) error {
+	if _, ok := n.peers.Load(p.ID()); ok {
+		return nil
+	}
 	conn, err := n.Dial(p.Address)
 	if err != nil {
 		return err
