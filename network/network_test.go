@@ -137,7 +137,7 @@ func (suite *NetworkTestSuite) TestPeers() {
 	<-suite.m1.peerConnected
 	<-suite.m2.peerConnected
 	peers := suite.n1.Peers()
-	assert.NotEmpty(t, peers)
+	assert.Equal(t, 1, len(peers))
 	assert.Equal(t, peers[0].ID(), suite.n2.ID())
 }
 
@@ -161,6 +161,17 @@ func (suite *NetworkTestSuite) TestBroadcastByID() {
 	ping := <-suite.m2.messages
 	_, ok := ping.(*protobuf.Ping)
 	assert.True(t, ok)
+}
+
+// TestReceiveFrom 测试 peer receive from
+func (suite *NetworkTestSuite) TestReceiveFrom() {
+	t := suite.T()
+	suite.n1.Bootstrap(suite.n2.Self().Encode())
+	suite.n1.BroadcastByIDs(
+		WithSignMessage(context.Background(), true), &protobuf.Ping{}, suite.n2.Self().ID(),
+	)
+	ctx := <-suite.m2.contexts
+	assert.Equal(t, suite.n1.ID(), ctx.Client().ID)
 }
 
 // TestPeerDisconnected 测试节点断开
