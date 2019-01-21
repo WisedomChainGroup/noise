@@ -1,14 +1,16 @@
 package network
 
 import (
-	"github.com/gogo/protobuf/proto"
 	"sync/atomic"
+
+	"github.com/gogo/protobuf/proto"
 )
 
 // plugin for network test
 type mailBox struct {
 	Plugin
 	messages         chan proto.Message
+	contexts         chan *PluginContext
 	started          chan struct{}
 	closed           chan struct{}
 	peerConnected    chan struct{}
@@ -22,6 +24,7 @@ func newMailBox() *mailBox {
 		closed:           make(chan struct{}),
 		peerConnected:    make(chan struct{}),
 		peerDisconnected: make(chan struct{}),
+		contexts:         make(chan *PluginContext),
 	}
 }
 
@@ -31,6 +34,7 @@ func (m *mailBox) Startup(*Network) {
 
 func (m *mailBox) Receive(ctx *PluginContext) error {
 	m.messages <- ctx.message
+	m.contexts <- ctx
 	return nil
 }
 
@@ -45,7 +49,6 @@ func (m *mailBox) PeerConnect(*PeerClient) {
 func (m *mailBox) PeerDisconnect(*PeerClient) {
 	close(m.peerDisconnected)
 }
-
 
 type MockPlugin struct {
 	*Plugin
