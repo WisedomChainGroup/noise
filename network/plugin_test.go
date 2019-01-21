@@ -22,8 +22,8 @@ func newMailBox() *mailBox {
 		messages:         make(chan proto.Message, 1),
 		started:          make(chan struct{}),
 		closed:           make(chan struct{}),
-		peerConnected:    make(chan struct{}),
-		peerDisconnected: make(chan struct{}),
+		peerConnected:    make(chan struct{}, 1),
+		peerDisconnected: make(chan struct{}, 1),
 		contexts:         make(chan *PluginContext),
 	}
 }
@@ -43,11 +43,11 @@ func (m *mailBox) Cleanup(*Network) {
 }
 
 func (m *mailBox) PeerConnect(*PeerClient) {
-	close(m.peerConnected)
+	m.peerConnected <- struct{}{}
 }
 
 func (m *mailBox) PeerDisconnect(*PeerClient) {
-	close(m.peerDisconnected)
+	m.peerDisconnected <- struct{}{}
 }
 
 type MockPlugin struct {
