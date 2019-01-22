@@ -2,13 +2,14 @@ package network
 
 import (
 	"context"
+	"errors"
+	"github.com/perlin-network/noise/log"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/perlin-network/noise/internal/protobuf"
-	"github.com/perlin-network/noise/log"
 	"github.com/gogo/protobuf/proto"
+	"github.com/perlin-network/noise/internal/protobuf"
 	"github.com/perlin-network/noise/network/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
@@ -88,8 +89,8 @@ func (suite *NetworkTestSuite) SetupTest() {
 	suite.n1 = newTestNetwork(GetRandomUnusedPort(), suite.m1)
 	suite.m2 = newMailBox()
 	suite.n2 = newTestNetwork(GetRandomUnusedPort(), suite.m2)
-	go suite.n1.Listen()
-	go suite.n2.Listen()
+	suite.n1.Listen()
+	suite.n2.Listen()
 	suite.n1.BlockUntilListening()
 	suite.n2.BlockUntilListening()
 }
@@ -107,9 +108,9 @@ func (suite *NetworkTestSuite) TestListen() {
 	t := suite.T()
 	m := newMailBox()
 	n := newTestNetwork(GetRandomUnusedPort(), m)
-	go n.Listen()
-	go assertNotTimeout(t, testifyTimeout, m.started)
-	go assertNotTimeout(t, testifyTimeout, n.listeningCh)
+	n.Listen()
+	assertNotTimeout(t, testifyTimeout, m.started)
+	assertNotTimeout(t, testifyTimeout, n.listeningCh)
 	n.Close()
 }
 
@@ -118,9 +119,9 @@ func (suite *NetworkTestSuite) TestClose() {
 	t := suite.T()
 	m := newMailBox()
 	n := newTestNetwork(GetRandomUnusedPort(), m)
-	go n.Listen()
+	n.Listen()
 	n.Close()
-	go assertNotTimeout(t, testifyTimeout, m.closed)
+	assertNotTimeout(t, testifyTimeout, m.closed)
 }
 
 // TestBootstrap 测试加入种子节点
@@ -154,9 +155,9 @@ func (suite *NetworkTestSuite) TestPeers() {
 func (suite *NetworkTestSuite) TestBroadcast() {
 	t := suite.T()
 	suite.n1.Bootstrap(suite.n2.Self().Encode())
-	suite.n1.Broadcast(WithSignMessage(context.Background(), true), &protobuf.Ping{})
+	suite.n1.Broadcast(WithSignMessage(context.Background(), true), &protobuf.Pong{})
 	ping := <-suite.m2.messages
-	_, ok := ping.(*protobuf.Ping)
+	_, ok := ping.(*protobuf.Pong)
 	assert.True(t, ok)
 }
 
@@ -165,10 +166,10 @@ func (suite *NetworkTestSuite) TestBroadcastByID() {
 	t := suite.T()
 	suite.n1.Bootstrap(suite.n2.Self().Encode())
 	suite.n1.BroadcastByIDs(
-		WithSignMessage(context.Background(), true), &protobuf.Ping{}, suite.n2.Self().ID(),
+		WithSignMessage(context.Background(), true), &protobuf.Pong{}, suite.n2.Self().ID(),
 	)
 	ping := <-suite.m2.messages
-	_, ok := ping.(*protobuf.Ping)
+	_, ok := ping.(*protobuf.Pong)
 	assert.True(t, ok)
 }
 
@@ -215,28 +216,66 @@ func (suite *NetworkTestSuite) TestPeersRing() {
 			mailboxes[i],
 		)
 		networks[i] = network
-		go networks[i].Listen()
-		networks[i].BlockUntilListening()
+		network.Listen()
 	}
 	// let peers join each other
-	for i := 0; i < nodes; i++ {
-		for j := 0; j < nodes; j++ {
-			if i != j {
-				go networks[i].Bootstrap(networks[j].Self().Encode())
-			}
-		}
+	for i, p := range networks {
+		q := networks[(i+1)%len(networks)]
+		p.Bootstrap(q.Self().Encode())
 	}
 	// peers join assertion
+	for _, m := range mailboxes {
+		assertNotTimeout(t, testifyTimeout, m.peerConnected)
+		assertNotTimeout(t, testifyTimeout, m.peerConnected)
+	}
+	// broadcast to p2p ring
+	networks[nodes-1].Broadcast(WithSignMessage(context.Background(), true), &protobuf.Pong{})
+	msg := <-mailboxes[0].messages
+	_, ok := msg.(*protobuf.Pong)
+	assert.True(t, ok)
+}
+
+// TestAddPeerSync 测试添加 peer
+func (suite *NetworkTestSuite) TestAddPeerSync() {
+	t := suite.T()
+	assert.NoError(t, suite.n1.AddPeer(suite.n2.Self()))
+	<-suite.m2.peerConnected
+	assert.Error(t, errors.New("the peer has connected"), suite.n1.AddPeer(suite.n2.Self()))
+}
+
+// TestPeersStar 测试星形结构
+func (suite *NetworkTestSuite) TestPeersStar() {
+	t := suite.T()
+	const nodes = 15
+	networks := make([]*Network, nodes)
+	mailboxes := make([]*mailBox, nodes)
+	for i := 0; i < nodes; i++ {
+		mailboxes[i] = newMailBox()
+		network := newTestNetwork(
+			GetRandomUnusedPort(),
+			mailboxes[i],
+		)
+		networks[i] = network
+		network.Listen()
+		network.BlockUntilListening()
+	}
+	//  let peers join each other
+	for i, p := range networks {
+		for j := i + 1; j < nodes; j++ {
+			go p.Bootstrap(networks[j].Self().Encode())
+		}
+	}
+
 	for _, m := range mailboxes {
 		for i := 0; i < nodes-1; i++ {
 			assertNotTimeout(t, testifyTimeout, m.peerConnected)
 		}
 	}
-	// broadcast to p2p ring
-	networks[0].Broadcast(WithSignMessage(context.Background(), true), &protobuf.Ping{})
-	for  _, m := range mailboxes[1:] {
-		go assertNotTimeoutMessage(t, testifyTimeout, m.messages)
-	}
+
+	networks[nodes-1].Broadcast(WithSignMessage(context.Background(), true), &protobuf.Pong{})
+	msg := <-mailboxes[0].messages
+	_, ok := msg.(*protobuf.Pong)
+	assert.True(t, ok)
 }
 
 func TestNetworkTestSuite(t *testing.T) {

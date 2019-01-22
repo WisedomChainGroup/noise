@@ -30,7 +30,7 @@ const (
 	defaultWriteTimeout      = 3 * time.Second
 )
 
-// TODO: peer保活
+// TODO: peers 数量限制
 var contextPool = sync.Pool{
 	New: func() interface{} {
 		return new(PluginContext)
@@ -240,8 +240,6 @@ func (n *Network) Listen() {
 		log.Fatal().Err(err).Msg("")
 	}
 
-	n.startListening()
-
 	log.Info().
 		Str("address", n.Self().Encode()).
 		Msg("Listening for peers.")
@@ -256,20 +254,24 @@ func (n *Network) Listen() {
 	}()
 
 	// Handle new clients.
-	for {
-		if conn, err := listener.Accept(); err == nil {
-			go n.Accept(conn)
-		} else {
-			// if the Shutdown flag is set, no need to continue with the for loop
-			select {
-			case <-n.kill:
-				log.Info().Msgf("Shutting down server %s.", n.Address)
-				return
-			default:
-				log.Error().Msgf("%v", err)
+	go func() {
+		for {
+			if conn, err := listener.Accept(); err == nil {
+				go n.Accept(conn)
+			} else {
+				// if the Shutdown flag is set, no need to continue with the for loop
+				select {
+				case <-n.kill:
+					log.Info().Msgf("Shutting down server %s.", n.Address)
+					return
+				default:
+					log.Error().Msgf("%v", err)
+				}
 			}
 		}
-	}
+	}()
+
+	n.startListening()
 }
 
 // Client either creates or returns a cached peer client given its host address.
@@ -343,7 +345,10 @@ func (n *Network) Bootstrap(raws ...string) {
 
 func (n *Network) AddPeer(p *Peer) error {
 	if _, ok := n.peers.Load(p.ID()); ok {
-		return nil
+		return errors.New("the peer has connected")
+	}
+	if p.ID() == n.ID() {
+		return errors.New("cannot connect it self")
 	}
 	conn, err := n.Dial(p.Address)
 	if err != nil {
@@ -357,6 +362,7 @@ func (n *Network) AddPeer(p *Peer) error {
 	if err != nil {
 		log.Error().Msgf("%v", err)
 	}
+	log.Info().Msgf("peer connected %s", p.ID())
 	n.Write(p.ID(), ping)
 	return err
 }
@@ -412,7 +418,10 @@ func (n *Network) Accept(incoming net.Conn) {
 		PublicKey: msg.Sender.PublicKey,
 		Address:   msg.Sender.Address,
 	}
-
+	if _, ok := n.peers.Load(sender.ID()); ok {
+		return
+	}
+	log.Info().Msgf("peer connected %s", sender.ID())
 	n.Client(sender, incoming)
 }
 
