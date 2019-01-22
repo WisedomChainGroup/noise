@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/perlin-network/noise/internal/protobuf"
 	"github.com/perlin-network/noise/network/transport"
 	"github.com/stretchr/testify/assert"
@@ -17,15 +16,7 @@ import (
 
 var testifyTimeout = time.Second * 5
 
-func assertNotTimeout(t *testing.T, timeout time.Duration, c chan struct{}) {
-	select {
-	case <-c:
-	case <-time.NewTimer(timeout).C:
-		t.Fail()
-	}
-}
-
-func assertNotTimeoutMessage(t *testing.T, timeout time.Duration, c chan proto.Message) {
+func assertNotTimeout(t *testing.T, timeout time.Duration, c chan interface{}) {
 	select {
 	case <-c:
 	case <-time.NewTimer(timeout).C:
@@ -110,7 +101,6 @@ func (suite *NetworkTestSuite) TestListen() {
 	n := newTestNetwork(GetRandomUnusedPort(), m)
 	n.Listen()
 	assertNotTimeout(t, testifyTimeout, m.started)
-	assertNotTimeout(t, testifyTimeout, n.listeningCh)
 	n.Close()
 }
 
@@ -180,7 +170,9 @@ func (suite *NetworkTestSuite) TestReceiveFrom() {
 	suite.n1.BroadcastByIDs(
 		WithSignMessage(context.Background(), true), &protobuf.Ping{}, suite.n2.Self().ID(),
 	)
-	ctx := <-suite.m2.contexts
+	recv := <-suite.m2.contexts
+	ctx, ok := recv.(*PluginContext)
+	assert.True(t, ok)
 	assert.Equal(t, suite.n1.ID(), ctx.Client().ID)
 }
 
